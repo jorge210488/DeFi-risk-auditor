@@ -1,0 +1,26 @@
+version: "3.8"
+
+services:
+  web:
+    build: . # construye la imagen usando el Dockerfile en el directorio actual
+    ports:
+      - "5000:5000"
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    depends_on:
+      - redis
+    # Por defecto, usará el CMD del Dockerfile (python app.py) para correr Flask
+
+  worker:
+    build: . # reutiliza la misma imagen que la web, ya que contiene la app y libs
+    depends_on:
+      - redis
+    environment:
+      - CELERY_BROKER_URL=redis://redis:6379/0
+    command: celery -A tasks worker --loglevel=INFO
+
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379"
+    # Para desarrollo, exponemos Redis también; en producción puede no ser necesario

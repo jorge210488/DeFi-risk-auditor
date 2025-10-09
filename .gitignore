@@ -1,0 +1,114 @@
+# =========================
+#  Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Entornos virtuales
+venv/
+env/
+.venv/
+
+# Archivos temporales de pip
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Configuraciones locales
+*.env
+.env.*
+!example.env
+
+# =========================
+#  IDEs y Editores
+# =========================
+# Visual Studio Code
+.vscode/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+# PyCharm / JetBrains
+.idea/
+.idea/*
+
+# =========================
+#  Archivos de sistema
+# =========================
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# =========================
+#  Logs y cachés
+# =========================
+*.log
+*.out
+*.err
+logs/
+*.sqlite3
+
+# =========================
+#  Docker
+# =========================
+# Archivos generados por contenedores
+docker-compose.override.yml
+*.pid
+*.seed
+*.bak
+
+# =========================
+#  Redis / Celery
+# =========================
+# Archivos temporales de Redis y Celery
+celerybeat-schedule
+celerybeat.pid
+*.db
+*.rdb
+__pycache__/
+*.py[cod]
+
+# =========================
+#  Tests / Coverage
+# =========================
+.coverage
+.tox/
+.nox/
+.cache/
+.pytest_cache/
+htmlcov/
+*.cover
+*.coverage
+coverage.xml
+*.pytest_cache
+test-results/
+
+# =========================
+#  FastAPI / Uvicorn
+# =========================
+# Logs generados por el servidor
+*.log
+uvicorn.log
+
+# =========================
+#  Data y notebooks
+# =========================
+data/
+notebooks/
+*.ipynb_checkpoints
+
+# =========================
+#  Modelos de IA
+# =========================
+models/
+*.pkl
+*.joblib
+*.h5
+*.onnx
+
+# =========================
+#  Configuración personal
+# =========================
+# Archivos con credenciales o configuración local
+config_local.py
+secrets.json
