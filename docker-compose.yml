@@ -1,26 +1,80 @@
-version: "3.8"
-
 services:
   web:
-    build: . # construye la imagen usando el Dockerfile en el directorio actual
+    build: .
+    # Aplica migraciones y luego arranca Flask
+    command: sh -lc "flask --app wsgi.py db upgrade && python wsgi.py"
     ports:
       - "5000:5000"
     environment:
+      - FLASK_APP=wsgi.py
+      - FLASK_ENV=development
       - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgresql+psycopg2://app_user:app_pass@db:5432/app_db
     depends_on:
-      - redis
-    # Por defecto, usará el CMD del Dockerfile (python app.py) para correr Flask
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    healthcheck:
+      # usa healthz si lo tienes; si no, puedes dejarlo fuera
+      test:
+        [
+          "CMD-SHELL",
+          "wget -qO- http://localhost:5000/healthz || curl -fsS http://localhost:5000/healthz || exit 1",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    # volumes:
+    #   - .:/app  # útil en dev para hot-reload y correr migraciones desde el host
 
   worker:
-    build: . # reutiliza la misma imagen que la web, ya que contiene la app y libs
-    depends_on:
-      - redis
+    build: .
+    # Garantiza que la BD esté migrada antes de levantar el worker
+    command: sh -lc "flask --app wsgi.py db upgrade && celery -A app.tasks.celery_app.celery worker --loglevel=INFO"
     environment:
+      - FLASK_ENV=development
       - CELERY_BROKER_URL=redis://redis:6379/0
-    command: celery -A tasks worker --loglevel=INFO
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - DATABASE_URL=postgresql+psycopg2://app_user:app_pass@db:5432/app_db
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    # volumes:
+    #   - .:/app
 
   redis:
     image: redis:alpine
     ports:
-      - "6379:6379"
-    # Para desarrollo, exponemos Redis también; en producción puede no ser necesario
+      - "6379:6379" # en prod puedes quitarlo
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=app_db
+      - POSTGRES_USER=app_user
+      - POSTGRES_PASSWORD=app_pass
+    ports:
+      - "5432:5432" # útil en dev para pgAdmin/DBeaver
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app_user -d app_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  pgdata:
