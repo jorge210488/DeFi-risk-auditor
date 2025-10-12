@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+build/
+dist/
+*.egg-info/
+.pytest_cache/
+.coverage
+
+# Editores / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Node (si llegas a usar)
+node_modules/
+
+# Datos locales
+pgdata/
+*.db
+
+# Docker / Compose (no hace falta mandarlos al build context)
+Dockerfile*
+docker-compose*.yml
+
+# Variables de entorno (¡no las subas al build!)
+.env
+.env.*

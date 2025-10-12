@@ -1,5 +1,7 @@
 FROM python:3.10-slim
 WORKDIR /app
+ENV PYTHONPATH=/app
+
 
 # Crear usuario no-root
 RUN useradd -m -u 1000 -s /bin/bash appuser
@@ -13,3 +15,6 @@ USER appuser
 
 EXPOSE 5000
 CMD ["python", "wsgi.py"]
+
+USER appuser
+

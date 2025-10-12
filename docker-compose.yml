@@ -5,19 +5,31 @@ services:
     command: sh -lc "flask --app wsgi.py db upgrade && python wsgi.py"
     ports:
       - "5000:5000"
+    env_file:
+      - .env
     environment:
       - FLASK_APP=wsgi.py
       - FLASK_ENV=development
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - DATABASE_URL=postgresql+psycopg2://app_user:app_pass@db:5432/app_db
+      # Redis / Celery (con fallback por si no hay .env)
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      # DB (fallback si no lo pones en .env)
+      - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg2://app_user:app_pass@db:5432/app_db}
+      # Rutas/ABI (puedes definirlas también en .env)
+      - CONTRACT_ABI_PATH=${CONTRACT_ABI_PATH:-/app/app/abi/Contract.json}
+      # Web3 (si prefieres, déjalas solo en .env)
+      - WEB3_PROVIDER_URI=${WEB3_PROVIDER_URI}
+      - WEB3_CHAIN_ID=${WEB3_CHAIN_ID:-1}
+      - WEB3_USE_POA=${WEB3_USE_POA:-false}
+      - CONTRACT_ADDRESS=${CONTRACT_ADDRESS}
+      # PRIVATE_KEY: solo lectura en web no la usa, pero no pasa nada si viene por env_file
+      - PRIVATE_KEY=${PRIVATE_KEY}
     depends_on:
       redis:
         condition: service_healthy
       db:
         condition: service_healthy
     healthcheck:
-      # usa healthz si lo tienes; si no, puedes dejarlo fuera
       test:
         [
           "CMD-SHELL",
@@ -27,26 +39,34 @@ services:
       timeout: 3s
       retries: 10
     restart: unless-stopped
-    # volumes:
-    #   - .:/app  # útil en dev para hot-reload y correr migraciones desde el host
+    volumes:
+      - .:/app # ✅ monta todo el proyecto para hot-reload
 
   worker:
     build: .
     # Garantiza que la BD esté migrada antes de levantar el worker
     command: sh -lc "flask --app wsgi.py db upgrade && celery -A app.tasks.celery_app.celery worker --loglevel=INFO"
+    env_file:
+      - .env
     environment:
       - FLASK_ENV=development
-      - CELERY_BROKER_URL=redis://redis:6379/0
-      - CELERY_RESULT_BACKEND=redis://redis:6379/0
-      - DATABASE_URL=postgresql+psycopg2://app_user:app_pass@db:5432/app_db
+      - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
+      - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
+      - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg2://app_user:app_pass@db:5432/app_db}
+      - CONTRACT_ABI_PATH=${CONTRACT_ABI_PATH:-/app/app/abi/Contract.json}
+      - WEB3_PROVIDER_URI=${WEB3_PROVIDER_URI}
+      - WEB3_CHAIN_ID=${WEB3_CHAIN_ID:-1}
+      - WEB3_USE_POA=${WEB3_USE_POA:-false}
+      - CONTRACT_ADDRESS=${CONTRACT_ADDRESS}
+      - PRIVATE_KEY=${PRIVATE_KEY} # Necesaria para enviar transacciones
     depends_on:
       redis:
         condition: service_healthy
       db:
         condition: service_healthy
     restart: unless-stopped
-    # volumes:
-    #   - .:/app
+    volumes:
+      - .:/app # ✅ sincroniza el código fuente local con el contenedor
 
   redis:
     image: redis:alpine

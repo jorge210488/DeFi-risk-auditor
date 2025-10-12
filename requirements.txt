@@ -27,3 +27,5 @@ flask_sqlalchemy==3.1.1
 flask_migrate==4.0.7
 psycopg2-binary==2.9.9
 python-dotenv==1.0.1
+
+web3==6.11.3
