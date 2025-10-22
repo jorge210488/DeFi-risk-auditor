@@ -69,11 +69,14 @@ def _init_celery_with_flask():
     with app.app_context():
         from app.tasks import background_tasks  # noqa: F401
 
-        # Import opcional: solo si ya creaste blockchain_tasks
+        # Opcionales: no fallar si no existen todavía
         try:
             from app.tasks import blockchain_tasks  # noqa: F401
         except Exception:
-            # No fallar si aún no existe
+            pass
+        try:
+            from app.tasks import ai_tasks  # noqa: F401
+        except Exception:
             pass
 
     return app
