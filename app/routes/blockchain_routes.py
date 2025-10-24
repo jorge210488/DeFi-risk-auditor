@@ -9,7 +9,11 @@ from flask import Blueprint, jsonify, request
 bp = Blueprint("blockchain", __name__)
 
 # ABI auto (Etherscan + caché en DB)
-from app.services.abi_service import get_abi_for_address, fetch_abi_from_etherscan, save_abi
+from app.services.abi_service import (
+    get_abi_for_address,
+    fetch_abi_from_etherscan,
+    save_abi,
+)
 from app.models import db, AnalysisJob
 
 
@@ -73,6 +77,11 @@ def _to_jsonable(x: Any):
 
 # --- Rutas ---
 
+@bp.route("/ping", methods=["GET"])
+def ping():
+    return jsonify({"ok": True}), 200
+
+
 @bp.route("/health", methods=["GET"])
 def health():
     return jsonify({"ok": True}), 200
@@ -92,10 +101,11 @@ def info():
 @bp.route("/call", methods=["POST"])
 def call_contract():
     """
-    Prioridad de ABI:
-      1) 'abi' inline en el body (lista/dict o string JSON)
-      2) 'abi_path' (o env CONTRACT_ABI_PATH si existe)
-      3) Descargar/cachar desde Etherscan (ETHERSCAN_API_KEY + ETHERSCAN_NETWORK)
+    Prioridad de ABI (respetando force_refresh):
+      1) 'abi' inline (lista/dict o string JSON)  [opcional: cache_manual:true -> guarda en DB]
+      2) force_refresh==true  -> bajar desde Etherscan (V2) y cachear
+      3) 'abi_path' (o env CONTRACT_ABI_PATH si existe)  [opcional: cache_manual:true -> guarda en DB]
+      4) cache Etherscan (get_abi_for_address: DB o fetch)
 
     Body ejemplo:
     {
@@ -104,7 +114,8 @@ def call_contract():
       "contract_address": "0x...",
       "abi_path": "/app/app/abi/ERC20.json",
       "abi": [...],                  // opcional
-      "force_refresh": false         // si true, vuelve a bajar de Etherscan
+      "force_refresh": false,        // si true, vuelve a bajar de Etherscan
+      "cache_manual": true           // si usas abi inline o archivo, guarda en DB
     }
     """
     data = request.get_json(silent=True) or {}
@@ -117,6 +128,7 @@ def call_contract():
     abi_path = data.get("abi_path") or os.getenv("CONTRACT_ABI_PATH", "/app/app/abi/Contract.json")
     abi_inline = data.get("abi")
     force_refresh = bool(data.get("force_refresh"))
+    cache_manual = bool(data.get("cache_manual"))
     network = os.getenv("ETHERSCAN_NETWORK", "sepolia")
 
     if not func_name:
@@ -128,22 +140,32 @@ def call_contract():
         from web3 import Web3
         w3 = _make_w3()
 
-        # --- Resolver ABI
+        # --- Resolver ABI (orden con force_refresh) ---
+        resolved_from = None
+
         if abi_inline:
-            # Si viene como string JSON, parsear
             abi = json.loads(abi_inline) if isinstance(abi_inline, str) else abi_inline
+            resolved_from = "inline"
+            if cache_manual:
+                save_abi(contract_address, abi, network=network, source="manual")
+
+        elif force_refresh:
+            fresh = fetch_abi_from_etherscan(contract_address, network=network)
+            save_abi(contract_address, fresh, network=network, source="etherscan")
+            abi = fresh
+            resolved_from = "etherscan"
+
         elif data.get("abi_path") or (abi_path and os.path.exists(abi_path)):
             abi = _load_abi(abi_path)
+            resolved_from = "file"
+            if cache_manual:
+                save_abi(contract_address, abi, network=network, source="manual")
+
         else:
-            # Etherscan (con cache en DB). Si force_refresh => fuerza descarga + guarda.
-            if force_refresh:
-                fresh = fetch_abi_from_etherscan(contract_address, network=network)
-                save_abi(contract_address, fresh, network=network, source="etherscan")
-                abi = fresh
-            else:
-                abi = get_abi_for_address(contract_address, network=network)
-                if isinstance(abi, str):
-                    abi = json.loads(abi)
+            abi = get_abi_for_address(contract_address, network=network)
+            if isinstance(abi, str):
+                abi = json.loads(abi)
+            resolved_from = "db_or_etherscan"
 
         contract = w3.eth.contract(
             address=Web3.to_checksum_address(contract_address),
@@ -155,7 +177,7 @@ def call_contract():
 
         fn = getattr(contract.functions, func_name)(*args)
         result = fn.call()
-        return jsonify({"ok": True, "result": _to_jsonable(result)}), 200
+        return jsonify({"ok": True, "source": resolved_from, "result": _to_jsonable(result)}), 200
 
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)}), 500

@@ -43,7 +43,7 @@ def _init_celery_with_flask():
     config_name = os.getenv("FLASK_ENV", "development")
     app = create_app(config_name)
 
-    # Mapear config de Flask a claves de Celery
+    # Mapear config de Flask a claves de Celery (por si están en config)
     broker = app.config.get("CELERY_BROKER_URL") or app.config.get("broker_url")
     backend = (
         app.config.get("CELERY_RESULT_BACKEND")
@@ -65,17 +65,21 @@ def _init_celery_with_flask():
 
     celery.Task = ContextTask
 
-    # Registrar las tareas (importa los módulos que definen @celery.task)
+    # Registrar las tareas (importa los módulos que definen @shared_task)
     with app.app_context():
         from app.tasks import background_tasks  # noqa: F401
 
-        # Opcionales: no fallar si no existen todavía
+        # Mantener todos los módulos de tasks que ya tienes en el proyecto:
         try:
             from app.tasks import blockchain_tasks  # noqa: F401
         except Exception:
             pass
         try:
-            from app.tasks import ai_tasks  # noqa: F401
+            from app.tasks import ai_tasks  # noqa: F401  <-- Etapa 3 (IA en background)
+        except Exception:
+            pass
+        try:
+            from app.tasks import audit_tasks  # noqa: F401  <-- Etapa 4 (auditoría on-chain + IA)
         except Exception:
             pass
 
