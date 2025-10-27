@@ -20,3 +20,17 @@ class ProductionConfig(BaseConfig):
     DEBUG = False
     ENV = "production"
     # Aquí luego podés añadir logging seguro, CORS, etc.
+
+class TestingConfig(DevelopmentConfig):
+    TESTING = True
+    # DB en memoria para tests rápidos
+    SQLALCHEMY_DATABASE_URI = "sqlite:///:memory:"
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+    # Evitar Celery real en tests; si llegas a usar tareas, que se ejecuten en el mismo proceso
+    CELERY_TASK_ALWAYS_EAGER = True
+    CELERY_TASK_EAGER_PROPAGATES = True
+
+    # Broker/backend de Celery en memoria (no imprescindible si no llamas tareas en tests)
+    CELERY_BROKER_URL = "memory://"
+    CELERY_RESULT_BACKEND = "cache+memory://"

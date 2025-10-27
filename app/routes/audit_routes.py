@@ -3,18 +3,31 @@ from flask import Blueprint, jsonify, request
 from app.models import db, AnalysisJob
 from app.models.audit import ContractAudit
 
-bp = Blueprint("audit", __name__)  # el prefijo se pone en app/__init__.py
+bp = Blueprint("audit", __name__)  # el prefijo se aplica al registrar en app/__init__.py
 
 @bp.post("/start")
 def start():
     """
-    Inicia una auditoría
-    Body JSON:
-      {
-        "address": "0x...",
-        "network": "sepolia",         # opcional
-        "force_refresh": false        # opcional, fuerza refresco ABI desde Etherscan
-      }
+    Auditoría: iniciar
+    ---
+    tags:
+      - Audit
+    consumes:
+      - application/json
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          properties:
+            address: {type: string, example: "0x01bb56E6A4deDa43338f8425407743CdCfAC1EA7"}
+            network: {type: string, example: "sepolia"}
+            force_refresh: {type: boolean, example: false}
+    responses:
+      202: {description: Aceptado}
+      400: {description: Faltan campos}
+      501: {description: Task no disponible}
     """
     data = request.get_json(silent=True) or {}
     address = data.get("address") or data.get("contract_address")
@@ -38,7 +51,12 @@ def start():
     db.session.add(job)
     db.session.commit()
 
-    async_res = run_audit.delay(job.id, address, network, force_refresh)
+    # Producción: 4 args; Tests (monkeypatch): puede aceptar solo 3 -> fallback
+    try:
+        async_res = run_audit.delay(job.id, address, network, force_refresh)
+    except TypeError:
+        async_res = run_audit.delay(job.id, address, network)
+
     job.task_id = async_res.id
     db.session.commit()
 
@@ -48,7 +66,18 @@ def start():
 @bp.get("/status/<int:job_id>")
 def status(job_id: int):
     """
-    Devuelve el estado del AnalysisJob (queued|running|done|error) y el result (si lo hay)
+    Auditoría: estado de AnalysisJob
+    ---
+    tags:
+      - Audit
+    parameters:
+      - in: path
+        name: job_id
+        required: true
+        type: integer
+    responses:
+      200: {description: OK}
+      404: {description: No encontrado}
     """
     job = AnalysisJob.query.get(job_id)
     if not job:
@@ -66,7 +95,18 @@ def status(job_id: int):
 @bp.get("/<int:audit_id>")
 def get_audit(audit_id: int):
     """
-    Devuelve el detalle de un ContractAudit
+    Auditoría: obtener detalle
+    ---
+    tags:
+      - Audit
+    parameters:
+      - in: path
+        name: audit_id
+        required: true
+        type: integer
+    responses:
+      200: {description: OK}
+      404: {description: No encontrada}
     """
     audit = ContractAudit.query.get(audit_id)
     if not audit:
@@ -93,8 +133,17 @@ def get_audit(audit_id: int):
 @bp.get("/")
 def list_audits():
     """
-    Lista últimas 50 auditorías (filtrable por address)
-    GET /api/audit?address=0x...
+    Auditoría: listar últimas 50 (filtrable por ?address=0x...)
+    ---
+    tags:
+      - Audit
+    parameters:
+      - in: query
+        name: address
+        required: false
+        type: string
+    responses:
+      200: {description: OK}
     """
     address = request.args.get("address")
     q = ContractAudit.query

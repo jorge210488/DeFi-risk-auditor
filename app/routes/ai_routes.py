@@ -1,17 +1,36 @@
 from flask import Blueprint, jsonify, request
 from app.services.ai_service import risk_score
 
-# Agregamos el prefijo aquí
+# Prefijo aquí
 bp = Blueprint("ai", __name__, url_prefix="/api/ai")
 
 @bp.route("/predict", methods=["POST"])
 def predict():
     """
-    Body JSON (ejemplo):
-    {
-      "feature1": 0.7,
-      "feature2": -0.1
-    }
+    IA: Score de riesgo (demo)
+    ---
+    tags:
+      - AI
+    consumes:
+      - application/json
+    parameters:
+      - in: body
+        name: body
+        required: false
+        schema:
+          type: object
+          properties:
+            feature1:
+              type: number
+              example: 0.3
+            feature2:
+              type: number
+              example: -0.4
+    responses:
+      200:
+        description: OK
+      400:
+        description: Error en entrada
     """
     payload = request.get_json(silent=True) or {}
     try:

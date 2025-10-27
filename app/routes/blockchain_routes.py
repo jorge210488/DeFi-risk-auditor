@@ -79,16 +79,38 @@ def _to_jsonable(x: Any):
 
 @bp.route("/ping", methods=["GET"])
 def ping():
+    """
+    Blockchain: ping
+    ---
+    tags: [Blockchain]
+    responses:
+      200: {description: OK}
+    """
     return jsonify({"ok": True}), 200
 
 
 @bp.route("/health", methods=["GET"])
 def health():
+    """
+    Blockchain: health
+    ---
+    tags: [Blockchain]
+    responses:
+      200: {description: OK}
+    """
     return jsonify({"ok": True}), 200
 
 
 @bp.route("/info", methods=["GET"])
 def info():
+    """
+    Blockchain: info de red
+    ---
+    tags: [Blockchain]
+    responses:
+      200: {description: OK}
+      503: {description: Error de conexión}
+    """
     try:
         w3 = _make_w3()
         chain_id = w3.eth.chain_id
@@ -98,25 +120,123 @@ def info():
         return jsonify({"ok": False, "error": str(e)}), 503
 
 
+@bp.route("/abi", methods=["POST"])
+def abi_save():
+    """
+    Blockchain: guardar ABI manualmente en DB
+    ---
+    tags: [Blockchain]
+    consumes: [application/json]
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          properties:
+            address: {type: string, example: "0x..."}
+            network: {type: string, example: "sepolia"}
+            abi:
+              type: array
+              items: {type: object}
+            source:
+              type: string
+              example: "manual"
+    responses:
+      200: {description: OK}
+      400: {description: Faltan campos}
+    """
+    data = request.get_json(silent=True) or {}
+    address = data.get("address")
+    network = data.get("network", os.getenv("ETHERSCAN_NETWORK", "sepolia"))
+    abi = data.get("abi")
+    source = data.get("source", "manual")
+
+    if not address or not abi:
+        return jsonify({"ok": False, "error": "Faltan 'address' o 'abi'"}), 400
+
+    abi_parsed = json.loads(abi) if isinstance(abi, str) else abi
+    save_abi(address, abi_parsed, network=network, source=source)
+    return jsonify({"ok": True}), 200
+
+
+@bp.route("/abi", methods=["GET"])
+def abi_resolve():
+    """
+    Blockchain: obtener ABI resuelto (DB/Etherscan)
+    ---
+    tags: [Blockchain]
+    parameters:
+      - in: query
+        name: address
+        required: true
+        type: string
+      - in: query
+        name: network
+        required: false
+        type: string
+        default: sepolia
+      - in: query
+        name: force_refresh
+        required: false
+        type: boolean
+        default: false
+    responses:
+      200: {description: OK}
+      400: {description: Faltan campos}
+      500: {description: Error servidor}
+    """
+    address = request.args.get("address")
+    network = request.args.get("network", os.getenv("ETHERSCAN_NETWORK", "sepolia"))
+    force_refresh = (request.args.get("force_refresh", "false").lower() in ("1", "true", "yes"))
+
+    if not address:
+        return jsonify({"ok": False, "error": "Falta 'address'"}), 400
+
+    try:
+        if force_refresh:
+            fresh = fetch_abi_from_etherscan(address, network=network)
+            save_abi(address, fresh, network=network, source="etherscan")
+            abi = fresh
+            src = "etherscan"
+        else:
+            abi = get_abi_for_address(address, network=network)
+            src = "db_or_etherscan"
+
+        return jsonify({"ok": True, "source": src, "abi": abi}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 @bp.route("/call", methods=["POST"])
 def call_contract():
     """
-    Prioridad de ABI (respetando force_refresh):
-      1) 'abi' inline (lista/dict o string JSON)  [opcional: cache_manual:true -> guarda en DB]
-      2) force_refresh==true  -> bajar desde Etherscan (V2) y cachear
-      3) 'abi_path' (o env CONTRACT_ABI_PATH si existe)  [opcional: cache_manual:true -> guarda en DB]
-      4) cache Etherscan (get_abi_for_address: DB o fetch)
-
-    Body ejemplo:
-    {
-      "function": "symbol",          // o "fn_name"
-      "args": [],
-      "contract_address": "0x...",
-      "abi_path": "/app/app/abi/ERC20.json",
-      "abi": [...],                  // opcional
-      "force_refresh": false,        // si true, vuelve a bajar de Etherscan
-      "cache_manual": true           // si usas abi inline o archivo, guarda en DB
-    }
+    Blockchain: llamada de solo lectura a contrato
+    ---
+    tags: [Blockchain]
+    consumes: [application/json]
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          properties:
+            contract_address: {type: string, example: "0x..."}
+            function: {type: string, example: "symbol"}
+            args:
+              type: array
+              items: {type: string}
+            force_refresh: {type: boolean, example: false}
+            abi_path: {type: string}
+            abi:
+              type: array
+              items: {type: object}
+            cache_manual: {type: boolean}
+    responses:
+      200: {description: OK}
+      400: {description: Error del cliente}
+      500: {description: Error servidor}
     """
     data = request.get_json(silent=True) or {}
 
@@ -186,13 +306,26 @@ def call_contract():
 @bp.route("/send", methods=["POST"])
 def send_tx():
     """
-    Encola una transacción firmada vía Celery y guarda el AnalysisJob.
-    Body JSON:
-      {
-        "function": "transfer",   // o "fn_name"
-        "args": ["0xDEST", 1000],
-        "value": 0
-      }
+    Blockchain: encolar transacción firmada (vía Celery)
+    ---
+    tags: [Blockchain]
+    consumes: [application/json]
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          properties:
+            function: {type: string, example: "transfer"}
+            args:
+              type: array
+              items: {}
+            value: {type: number, example: 0}
+    responses:
+      202: {description: Aceptado}
+      400: {description: Faltan campos}
+      501: {description: Task no disponible}
     """
     data = request.get_json(silent=True) or {}
 

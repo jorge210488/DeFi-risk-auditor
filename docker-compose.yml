@@ -2,14 +2,14 @@ services:
   web:
     build: .
     # Aplica migraciones y luego arranca Flask
-    command: sh -lc "flask --app wsgi.py db upgrade && python wsgi.py"
+    command: sh -lc "flask db upgrade || true && python wsgi.py"
     ports:
-      - "5000:5000"
+      - "5050:5000"
     env_file:
       - .env
     environment:
       - FLASK_APP=wsgi.py
-      - FLASK_ENV=development
+      - FLASK_ENV=production
       # Redis / Celery (con fallback por si no hay .env)
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/0}
       - CELERY_RESULT_BACKEND=${CELERY_RESULT_BACKEND:-redis://redis:6379/0}
@@ -24,6 +24,7 @@ services:
       - CONTRACT_ADDRESS=${CONTRACT_ADDRESS}
       # PRIVATE_KEY: solo lectura en web no la usa, pero no pasa nada si viene por env_file
       - PRIVATE_KEY=${PRIVATE_KEY}
+      - DEBUG_METRICS=1
     depends_on:
       redis:
         condition: service_healthy

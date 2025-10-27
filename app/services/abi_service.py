@@ -2,26 +2,42 @@
 import os
 import json
 import requests
+from datetime import datetime
 from typing import Optional, List, Union
 from web3 import Web3
 
 from app.models import db
 from app.models.contract_abi import ContractABI
 
-# ✅ Etherscan v2: SIEMPRE usar el dominio principal, la red se elige con chainid
+# Etherscan v2: SIEMPRE usar el dominio principal; la red se elige con chainid
 ETHERSCAN_V2_BASE = os.getenv("ETHERSCAN_V2_BASE", "https://api.etherscan.io/v2/api")
+
 
 def _norm_addr(addr: str) -> str:
     if not addr:
         raise ValueError("address vacío")
+    # Devuelve EIP-55; más abajo guardamos en minúsculas para consistencia
     return Web3.to_checksum_address(addr)
+
+
+def _norm_net(net: Optional[str]) -> str:
+    # Evita duplicados por casing y da default "sepolia"
+    return (net or "sepolia").strip().lower()
+
 
 def get_cached_abi(address: str, network: str = "sepolia") -> Optional[List[dict]]:
     ca = _norm_addr(address)
-    rec = ContractABI.query.filter_by(address=ca.lower(), network=network).first()
+    nw = _norm_net(network)
+    rec = ContractABI.query.filter_by(address=ca.lower(), network=nw).first()
     return rec.abi if rec else None
 
-def save_abi(address: str, abi: Union[str, List[dict]], network: str = "sepolia", source: str = "manual") -> None:
+
+def save_abi(
+    address: str,
+    abi: Union[str, List[dict]],
+    network: str = "sepolia",
+    source: str = "manual",
+) -> None:
     # Acepta lista o string JSON
     if isinstance(abi, str):
         abi = json.loads(abi)
@@ -29,14 +45,28 @@ def save_abi(address: str, abi: Union[str, List[dict]], network: str = "sepolia"
         raise RuntimeError("Formato de ABI inválido: se esperaba lista")
 
     ca = _norm_addr(address)
-    rec = ContractABI.query.filter_by(address=ca.lower(), network=network).first()
+    nw = _norm_net(network)
+    now = datetime.utcnow()
+
+    rec = ContractABI.query.filter_by(address=ca.lower(), network=nw).first()
     if rec:
         rec.abi = abi
         rec.source = source
+        rec.updated_at = now
     else:
-        rec = ContractABI(address=ca.lower(), network=network, source=source, abi=abi)
+        # Seteamos created_at/updated_at explícitos por si la DB no tiene default
+        rec = ContractABI(
+            address=ca.lower(),
+            network=nw,
+            source=source,
+            abi=abi,
+            created_at=now,
+            updated_at=now,
+        )
         db.session.add(rec)
+
     db.session.commit()
+
 
 def _parse_v2_result(data: dict) -> List[dict]:
     """
@@ -62,7 +92,9 @@ def _parse_v2_result(data: dict) -> List[dict]:
             return abi
 
     # lista con objetos que tienen ABI
-    if isinstance(res, list) and res and isinstance(res[0], dict) and any(k in res[0] for k in ("ABI", "Abi", "abi")):
+    if isinstance(res, list) and res and isinstance(res[0], dict) and any(
+        k in res[0] for k in ("ABI", "Abi", "abi")
+    ):
         abi_str = res[0].get("ABI") or res[0].get("Abi") or res[0].get("abi")
         abi = json.loads(abi_str)
         if not isinstance(abi, list):
@@ -84,25 +116,26 @@ def _parse_v2_result(data: dict) -> List[dict]:
 
     raise RuntimeError(f"No pude parsear la respuesta de Etherscan v2: {data}")
 
+
 def fetch_abi_from_etherscan(address: str, network: str = "sepolia") -> List[dict]:
     api_key = os.getenv("ETHERSCAN_API_KEY")
     if not api_key:
         raise RuntimeError("ETHERSCAN_API_KEY no definido en el entorno")
 
     # chainid: de env o por red
+    nw = _norm_net(network)
     chainid = os.getenv("ETHERSCAN_CHAIN_ID") or os.getenv("WEB3_CHAIN_ID")
     if not chainid:
-        chainid = "11155111" if network == "sepolia" else "1"
+        chainid = "11155111" if nw == "sepolia" else "1"
 
     params = {
-        "module":  "contract",
-        "action":  "getabi",
+        "module": "contract",
+        "action": "getabi",
         "address": _norm_addr(address),
-        "apikey":  api_key,
+        "apikey": api_key,
         "chainid": chainid,
     }
 
-    # 👇 IMPORTANTE: v2 SIEMPRE en api.etherscan.io/v2/api (no uses subdominios de testnet)
     r = requests.get(ETHERSCAN_V2_BASE, params=params, timeout=20)
     r.raise_for_status()
     data = r.json()
@@ -113,13 +146,16 @@ def fetch_abi_from_etherscan(address: str, network: str = "sepolia") -> List[dic
 
     return _parse_v2_result(data)
 
+
 def get_or_fetch_abi(address: str, network: str = "sepolia") -> List[dict]:
-    abi = get_cached_abi(address, network)
+    nw = _norm_net(network)
+    abi = get_cached_abi(address, nw)
     if abi:
         return abi
-    fresh = fetch_abi_from_etherscan(address, network)
-    save_abi(address, fresh, network=network, source="etherscan")
+    fresh = fetch_abi_from_etherscan(address, nw)
+    save_abi(address, fresh, network=nw, source="etherscan")
     return fresh
+
 
 # alias usado por el router
 get_abi_for_address = get_or_fetch_abi
