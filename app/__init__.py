@@ -3,7 +3,6 @@ from flasgger import Swagger
 from prometheus_flask_exporter import PrometheusMetrics
 
 from .logging_setup import setup_logging
-from .models import init_app as init_models
 from .routes import task_routes, blockchain_routes, health, ai_routes, audit_routes
 from .config import DevelopmentConfig, ProductionConfig, TestingConfig
 
@@ -11,7 +10,6 @@ from .config import DevelopmentConfig, ProductionConfig, TestingConfig
 def create_app(config_name: str = "development"):
     app = Flask(__name__)
 
-    # Cargar config sin usar el import string "app.config.*" (evita conflicto con paquete externo "app")
     config_map = {
         "development": DevelopmentConfig,
         "production": ProductionConfig,
@@ -19,11 +17,13 @@ def create_app(config_name: str = "development"):
     }
     app.config.from_object(config_map.get(config_name.lower(), DevelopmentConfig))
 
-    # Logging y modelos/DB
     setup_logging(app)
+
+    # 👇 Importar models aquí (ya con app creada y PYTHONPATH listo)
+    from .models import init_app as init_models
     init_models(app)
 
-    # Swagger (/apidocs/)
+    # Swagger
     swagger_template = {
         "swagger": "2.0",
         "info": {
@@ -57,7 +57,7 @@ def create_app(config_name: str = "development"):
     app.register_blueprint(ai_routes.bp)
     app.register_blueprint(audit_routes.bp, url_prefix="/api/audit")
 
-    # Métricas Prometheus (/metrics)
+    # Métricas
     metrics = PrometheusMetrics(app, path="/metrics")
     metrics.info("app_info", "DeFi Risk Auditor service", version="1.0.0")
 

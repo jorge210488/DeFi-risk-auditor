@@ -12,10 +12,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 COPY entrypoint.sh /app/entrypoint.sh
 
-# Aún como root: dar permisos y propiedad
+# Permisos como root
 RUN chmod +x /app/entrypoint.sh && chown -R appuser:appuser /app
 
-# Cambiar a usuario no-root
+# Cambiar a no-root
 USER appuser
 
 EXPOSE 5000
