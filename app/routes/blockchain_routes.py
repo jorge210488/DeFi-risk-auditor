@@ -20,6 +20,7 @@ from app.models import db, AnalysisJob
 # --- Helpers locales ---
 
 def _load_abi(abi_path: str):
+    """Carga un archivo de ABI desde disco y lo devuelve como JSON (lista/dict)."""
     p = Path(abi_path)
     if not p.exists():
         raise FileNotFoundError(f"ABI no encontrado: {abi_path}")
@@ -152,11 +153,18 @@ def abi_save():
     abi = data.get("abi")
     source = data.get("source", "manual")
 
-    if not address or not abi:
+    # Mejora: permitir abi=[] como válido; solo rechazar si es None
+    if not address or abi is None:
         return jsonify({"ok": False, "error": "Faltan 'address' o 'abi'"}), 400
 
+    # Acepta abi como lista de dicts o string JSON
     abi_parsed = json.loads(abi) if isinstance(abi, str) else abi
-    save_abi(address, abi_parsed, network=network, source=source)
+    try:
+        save_abi(address, abi_parsed, network=network, source=source)
+    except Exception as e:
+        # Mejora: devolver error controlado en JSON si falla la persistencia
+        return jsonify({"ok": False, "error": str(e)}), 500
+
     return jsonify({"ok": True}), 200
 
 
@@ -188,18 +196,20 @@ def abi_resolve():
     """
     address = request.args.get("address")
     network = request.args.get("network", os.getenv("ETHERSCAN_NETWORK", "sepolia"))
-    force_refresh = (request.args.get("force_refresh", "false").lower() in ("1", "true", "yes"))
+    force_refresh = request.args.get("force_refresh", "false").lower() in ("1", "true", "yes")
 
     if not address:
         return jsonify({"ok": False, "error": "Falta 'address'"}), 400
 
     try:
         if force_refresh:
-            fresh = fetch_abi_from_etherscan(address, network=network)
-            save_abi(address, fresh, network=network, source="etherscan")
-            abi = fresh
+            # Forzar obtención fresca desde Etherscan
+            fresh_abi = fetch_abi_from_etherscan(address, network=network)
+            save_abi(address, fresh_abi, network=network, source="etherscan")
+            abi = fresh_abi
             src = "etherscan"
         else:
+            # Obtener de DB o Etherscan (caché)
             abi = get_abi_for_address(address, network=network)
             src = "db_or_etherscan"
 
@@ -247,6 +257,7 @@ def call_contract():
     contract_address = data.get("contract_address") or os.getenv("CONTRACT_ADDRESS")
     abi_path = data.get("abi_path") or os.getenv("CONTRACT_ABI_PATH", "/app/app/abi/Contract.json")
     abi_inline = data.get("abi")
+    # Mantener comportamiento original (bool() sobre el valor recibido)
     force_refresh = bool(data.get("force_refresh"))
     cache_manual = bool(data.get("cache_manual"))
     network = os.getenv("ETHERSCAN_NETWORK", "sepolia")

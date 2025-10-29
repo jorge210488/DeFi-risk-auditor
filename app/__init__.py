@@ -1,12 +1,10 @@
-# app/__init__.py
 from flask import Flask
 from flasgger import Swagger
-from prometheus_flask_exporter import PrometheusMetrics
+from prometheus_flask_exporter import PrometheusMetrics  # Importar PrometheusMetrics
 
 from app.logging_setup import setup_logging
 from app.models import init_app as init_models
 from app.routes import task_routes, blockchain_routes, health, ai_routes, audit_routes
-
 
 def create_app(config_name: str = "development"):
     app = Flask(__name__)
@@ -15,7 +13,7 @@ def create_app(config_name: str = "development"):
     setup_logging(app)
     init_models(app)
 
-    # Swagger
+    # Configuración de Swagger (documentación interactiva en /apidocs/)
     swagger_template = {
         "swagger": "2.0",
         "info": {
@@ -29,8 +27,12 @@ def create_app(config_name: str = "development"):
     swagger_config = {
         "headers": [],
         "specs": [
-            {"endpoint": "apispec_1", "route": "/apispec_1.json",
-             "rule_filter": lambda rule: True, "model_filter": lambda tag: True}
+            {
+                "endpoint": "apispec_1",
+                "route": "/apispec_1.json",
+                "rule_filter": lambda rule: True,
+                "model_filter": lambda tag: True
+            }
         ],
         "static_url_path": "/flasgger_static",
         "swagger_ui": True,
@@ -38,15 +40,14 @@ def create_app(config_name: str = "development"):
     }
     Swagger(app, template=swagger_template, config=swagger_config)
 
-    # Blueprints
+    # Registro de Blueprints (rutas de la aplicación)
     app.register_blueprint(task_routes.bp)
     app.register_blueprint(blockchain_routes.bp, url_prefix="/api/blockchain")
     app.register_blueprint(health.bp)
     app.register_blueprint(ai_routes.bp)
     app.register_blueprint(audit_routes.bp, url_prefix="/api/audit")
 
-    # ✅ MÉTRICAS — mover aquí
-    from prometheus_flask_exporter import PrometheusMetrics
+    # Métricas de Prometheus en /metrics
     metrics = PrometheusMetrics(app, path="/metrics")
     metrics.info("app_info", "DeFi Risk Auditor service", version="1.0.0")
 
