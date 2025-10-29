@@ -8,13 +8,15 @@ RUN useradd -m -u 1000 -s /bin/bash appuser
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copiar código y entrypoint
 COPY . .
-RUN chown -R appuser:appuser /app
+COPY entrypoint.sh /app/entrypoint.sh
+
+# Aún como root: dar permisos y propiedad
+RUN chmod +x /app/entrypoint.sh && chown -R appuser:appuser /app
+
+# Cambiar a usuario no-root
 USER appuser
 
 EXPOSE 5000
-
-# Entrypoint que aplica migraciones (si están disponibles) y arranca la app
-COPY entrypoint.sh .
-RUN chmod +x entrypoint.sh
-CMD ["./entrypoint.sh"]
+CMD ["/app/entrypoint.sh"]
