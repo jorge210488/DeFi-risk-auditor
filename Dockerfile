@@ -15,4 +15,4 @@ USER appuser
 EXPOSE 5000
 
 # Ejecutar migraciones al iniciar el contenedor (usa DATABASE_URL de Render)
-CMD flask --app wsgi.py db upgrade && python wsgi.py
+CMD python -m flask --app wsgi.py db upgrade && python wsgi.py
