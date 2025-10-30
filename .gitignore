@@ -100,7 +100,7 @@ notebooks/
 # =========================
 #  Modelos de IA
 # =========================
-models/
+# (Se eliminó 'models/' para no ignorar la carpeta ni su contenido)
 *.pkl
 *.joblib
 *.h5
