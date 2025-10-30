@@ -36,9 +36,10 @@ services:
           "CMD-SHELL",
           "wget -qO- http://localhost:5000/healthz || curl -fsS http://localhost:5000/healthz || exit 1",
         ]
-      interval: 10s
+      interval: 10m
       timeout: 3s
-      retries: 10
+      retries: 2
+      start_period: 20s
     restart: unless-stopped
     volumes:
       - .:/app # ✅ monta todo el proyecto para hot-reload
@@ -75,9 +76,9 @@ services:
       - "6379:6379" # en prod puedes quitarlo
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      interval: 5m
       timeout: 3s
-      retries: 10
+      retries: 2
     restart: unless-stopped
 
   db:
@@ -92,9 +93,9 @@ services:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U app_user -d app_db"]
-      interval: 5s
+      interval: 7m
       timeout: 5s
-      retries: 20
+      retries: 2
     restart: unless-stopped
 
 volumes:

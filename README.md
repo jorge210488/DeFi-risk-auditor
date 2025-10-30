@@ -150,6 +150,10 @@ docker compose up --build
 
 ### Blockchain / ABI
 
+- `GET /api/blockchain/ping` — simple ping
+
+- `GET /api/blockchain/health` — simple health
+
 - `GET /api/blockchain/abi?address=0x...&network=sepolia|mainnet`
   Resolve ABI from cache or Etherscan v2 and return JSON list.
 
@@ -215,6 +219,9 @@ docker compose up --build
 
 ### Jobs (generic)
 
+- `POST /send`
+  Enqueue a background job for a signed transaction (requires worker task).
+
 - `POST /procesar`
   Example route to enqueue a background job; returns `job_id`.
 
@@ -246,6 +253,18 @@ curl -I "$BASE/apidocs/"
 
 ```bash
 curl -s "$BASE/metrics" | head -n 30
+```
+
+**Blockchain ping**
+
+```bash
+curl -s "$BASE/api/blockchain/ping"
+```
+
+**Blockchain health**
+
+```bash
+curl -s "$BASE/api/blockchain/health"
 ```
 
 **Save ABI manually**
@@ -308,6 +327,14 @@ curl -s "$BASE/api/audit/status/123"
 
 ```bash
 curl -s "$BASE/api/audit/456" | jq .
+```
+
+**Send job**
+
+```bash
+curl -s -X POST "$BASE/send" \
+  -H "Content-Type: application/json" \
+  -d '{"function":"echo","args":["hola"],"value":0}'
 ```
 
 ---
