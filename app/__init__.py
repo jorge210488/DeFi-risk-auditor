@@ -21,17 +21,31 @@ def create_app(config_name: str = "development"):
 
     setup_logging(app)
 
-    # 👇 CORS por variable de entorno
-    # - CORS_ORIGINS no seteada o '*'  -> permite todos los orígenes
-    # - CORS_ORIGINS="https://app.example.com,https://admin.example.com" -> sólo esos
-    cors_origins = os.getenv("CORS_ORIGINS", "*").strip()
-    if cors_origins == "*" or cors_origins == "":
-        CORS(app)  # permite todo
+    # 👇 CORS desde variable de entorno CORS_ORIGIN
+    # - CORS_ORIGIN no seteada o '*'  -> permite todos los orígenes
+    # - CORS_ORIGIN="https://app.example.com,https://admin.example.com" -> sólo esos
+    cors_origin = os.getenv("CORS_ORIGINS", "*").strip()
+    cors_common_kwargs = dict(
+        supports_credentials=False,
+        methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+        allow_headers=[
+            "Content-Type",
+            "Authorization",
+            "X-Requested-With",
+            "Accept",
+            "Origin",
+            "User-Agent",
+            "Cache-Control",
+            "Pragma",
+        ],
+    )
+    if cors_origin == "*" or cors_origin == "":
+        CORS(app, resources={r"/*": {"origins": "*"}}, **cors_common_kwargs)
     else:
-        origins_list = [o.strip() for o in cors_origins.split(",") if o.strip()]
-        CORS(app, resources={r"/*": {"origins": origins_list}})
+        origins_list = [o.strip() for o in cors_origin.split(",") if o.strip()]
+        CORS(app, resources={r"/*": {"origins": origins_list}}, **cors_common_kwargs)
     # Ejemplo (comentado) para un único origen específico:
-    # CORS(app, resources={r"/*": {"origins": ["https://app.example.com"]}})
+    # CORS(app, resources={r"/*": {"origins": ["https://app.example.com"]}}, **cors_common_kwargs)
 
     # 👇 Importar models aquí (ya con app creada y PYTHONPATH listo)
     from .models import init_app as init_models
