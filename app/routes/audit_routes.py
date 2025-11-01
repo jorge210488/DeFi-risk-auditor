@@ -5,6 +5,15 @@ from app.models.audit import ContractAudit
 
 bp = Blueprint("audit", __name__)  # el prefijo se aplica al registrar en app/__init__.py
 
+# --- Helpers locales ---
+
+def _as_bool(v) -> bool:
+    return str(v).lower() in ("1", "true", "yes", "on")
+
+def _iso(dt):
+    return dt.replace(microsecond=0).isoformat() + "Z" if dt else None
+
+
 @bp.post("/start")
 def start():
     """
@@ -20,19 +29,40 @@ def start():
         required: true
         schema:
           type: object
+          required:
+            - address
           properties:
-            address: {type: string, example: "0x01bb56E6A4deDa43338f8425407743CdCfAC1EA7"}
-            network: {type: string, example: "sepolia"}
-            force_refresh: {type: boolean, example: false}
+            address:
+              type: string
+              description: Dirección del contrato a auditar.
+              default: "0x3245166A4399A34A76cc9254BC13Aae3dA07e27b"
+              example: "0x3245166A4399A34A76cc9254BC13Aae3dA07e27b"
+            network:
+              type: string
+              description: Red a utilizar.
+              default: "sepolia"
+              example: "sepolia"
+            force_refresh:
+              type: boolean
+              description: Forzar re-descarga de la ABI desde Etherscan.
+              default: false
+              example: false
+          example:
+            address: "0x3245166A4399A34A76cc9254BC13Aae3dA07e27b"
+            network: "sepolia"
+            force_refresh: false
     responses:
-      202: {description: Aceptado}
-      400: {description: Faltan campos}
-      501: {description: Task no disponible}
+      202:
+        description: Aceptado (job encolado)
+      400:
+        description: Faltan campos
+      501:
+        description: Task no disponible
     """
     data = request.get_json(silent=True) or {}
-    address = data.get("address") or data.get("contract_address")
-    network = data.get("network", "sepolia")
-    force_refresh = bool(data.get("force_refresh", False))
+    address = (data.get("address") or data.get("contract_address") or "").strip()
+    network = (data.get("network") or "sepolia").strip().lower()
+    force_refresh = _as_bool(data.get("force_refresh", False))
 
     if not address:
         return jsonify({"ok": False, "error": "Falta 'address'"}), 400
@@ -75,9 +105,12 @@ def status(job_id: int):
         name: job_id
         required: true
         type: integer
+        example: 1
     responses:
-      200: {description: OK}
-      404: {description: No encontrado}
+      200:
+        description: OK
+      404:
+        description: No encontrado
     """
     job = AnalysisJob.query.get(job_id)
     if not job:
@@ -88,7 +121,9 @@ def status(job_id: int):
         "job_id": job.id,
         "status": job.status,
         "task_id": job.task_id,
-        "result": job.result
+        "result": job.result,
+        "created_at": _iso(job.created_at),
+        "updated_at": _iso(job.updated_at),
     }), 200
 
 
@@ -104,9 +139,12 @@ def get_audit(audit_id: int):
         name: audit_id
         required: true
         type: integer
+        example: 1
     responses:
-      200: {description: OK}
-      404: {description: No encontrada}
+      200:
+        description: OK
+      404:
+        description: No encontrada
     """
     audit = ContractAudit.query.get(audit_id)
     if not audit:
@@ -124,8 +162,8 @@ def get_audit(audit_id: int):
             "summary": audit.summary,
             "features": audit.features,
             "details": audit.details,
-            "started_at": audit.started_at.isoformat() if audit.started_at else None,
-            "finished_at": audit.finished_at.isoformat() if audit.finished_at else None,
+            "started_at": _iso(audit.started_at),
+            "finished_at": _iso(audit.finished_at),
         }
     }), 200
 
@@ -142,8 +180,11 @@ def list_audits():
         name: address
         required: false
         type: string
+        description: Filtra por dirección exacta (case-insensitive).
+        example: "0x3245166A4399A34A76cc9254BC13Aae3dA07e27b"
     responses:
-      200: {description: OK}
+      200:
+        description: OK
     """
     address = request.args.get("address")
     q = ContractAudit.query
@@ -162,8 +203,8 @@ def list_audits():
                 "ai_score": a.ai_score,
                 "risk_level": a.risk_level,
                 "summary": a.summary,
-                "started_at": a.started_at.isoformat() if a.started_at else None,
-                "finished_at": a.finished_at.isoformat() if a.finished_at else None,
+                "started_at": _iso(a.started_at),
+                "finished_at": _iso(a.finished_at),
             } for a in audits
         ]
     }), 200

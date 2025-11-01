@@ -1,4 +1,3 @@
-# app/routes/blockchain_routes.py
 import json
 import os
 from pathlib import Path
@@ -148,8 +147,11 @@ def abi_save():
         required: true
         schema:
           type: object
+          required:
+            - address
+            - abi
           properties:
-            address: {type: string, example: "0x..."}
+            address: {type: string, example: "0x3245166A4399A34A76cc9254BC13Aae3dA07e27b"}
             network: {type: string, example: "sepolia"}
             abi:
               type: array
@@ -157,6 +159,11 @@ def abi_save():
             source:
               type: string
               example: "manual"
+          example:
+            address: "0x3245166A4399A34A76cc9254BC13Aae3dA07e27b"
+            network: "sepolia"
+            abi: []
+            source: "manual"
     responses:
       201: {description: Created}
       200: {description: Updated}
@@ -207,16 +214,19 @@ def abi_resolve():
         name: address
         required: true
         type: string
+        example: "0x3245166A4399A34A76cc9254BC13Aae3dA07e27b"
       - in: query
         name: network
         required: false
         type: string
         default: sepolia
+        example: "sepolia"
       - in: query
         name: force_refresh
         required: false
         type: boolean
         default: false
+        example: false
     responses:
       200: {description: OK}
       400: {description: Faltan campos}
@@ -271,19 +281,29 @@ def call_contract():
         required: true
         schema:
           type: object
+          required:
+            - contract_address
+            - function
           properties:
-            contract_address: {type: string, example: "0x..."}
+            contract_address: {type: string, example: "0x3245166A4399A34A76cc9254BC13Aae3dA07e27b"}
             function: {type: string, example: "symbol"}
             args:
               type: array
               items: {type: string}
+              example: []
             network: {type: string, example: "sepolia"}
             force_refresh: {type: boolean, example: false}
             abi_path: {type: string}
             abi:
               type: array
               items: {type: object}
-            cache_manual: {type: boolean}
+            cache_manual: {type: boolean, example: false}
+          example:
+            contract_address: "0x3245166A4399A34A76cc9254BC13Aae3dA07e27b"
+            function: "symbol"
+            args: []
+            network: "sepolia"
+            force_refresh: false
     responses:
       200: {description: OK}
       400: {description: Error del cliente}
@@ -376,16 +396,20 @@ def send_tx():
         required: true
         schema:
           type: object
+          required:
+            - function
           properties:
             function: {type: string, example: "transfer"}
             args:
               type: array
               items: {}
+              example: []
             value: {type: number, example: 0}
     responses:
       202: {description: Aceptado}
-      400: {description: Faltan campos}
+      400: {description: Faltan/Inválidos}
       501: {description: Task no disponible}
+      500: {description: Error servidor}
     """
     data = request.get_json(silent=True) or {}
 
@@ -395,60 +419,141 @@ def send_tx():
 
     if not func_name:
         return jsonify({"ok": False, "error": "Falta 'function'"}), 400
+    if not isinstance(args, list):
+        return jsonify({"ok": False, "error": "'args' debe ser una lista"}), 400
+    try:
+        # normaliza value (soporta str numéricas)
+        if isinstance(value, str):
+            value = int(value, 0)  # admite "10" o "0x..."
+        else:
+            value = int(value or 0)
+    except Exception:
+        return jsonify({"ok": False, "error": "'value' debe ser entero"}), 400
 
     # Import diferido de la task
     try:
         from app.tasks.blockchain_tasks import send_and_wait
-    except Exception:
+    except Exception as e:
         return jsonify({
             "ok": False,
-            "error": "Task 'send_and_wait' no está disponible. Crea app/tasks/blockchain_tasks.py."
+            "error": "Task 'send_and_wait' no está disponible. Crea app/tasks/blockchain_tasks.py.",
+            "detail": str(e),
         }), 501
 
-    # Crear job y encolar
-    job = AnalysisJob(status="queued", params=data)
-    db.session.add(job)
-    db.session.commit()
+    try:
+        # Crear job y encolar
+        job = AnalysisJob(status="queued", params=data)
+        db.session.add(job)
+        db.session.commit()
 
-    async_res = send_and_wait.delay(job.id, func_name, args, value)
-    job.task_id = async_res.id
-    db.session.commit()
+        async_res = send_and_wait.delay(job.id, func_name, args, value)
+        job.task_id = async_res.id
+        db.session.commit()
 
-    return jsonify({"ok": True, "job_id": job.id, "task_id": async_res.id, "status": "queued"}), 202
+        return jsonify({
+            "ok": True,
+            "job_id": job.id,
+            "task_id": async_res.id,
+            "status": "queued"
+        }), 202
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            "ok": False,
+            "error": "No se pudo encolar la tarea",
+            "detail": str(e),
+        }), 500
 
 
 @bp.route("/procesar", methods=["POST"])
 def procesar_alias():
     """
-    Alias simple de /send para compatibilidad.
-    Si recibe {"text": "..."} y no hay "function", mapea a {"function":"echo","args":[text]}.
+    Blockchain: procesar (alias de /send)
+    ---
+    tags: [Blockchain]
+    description: 'Alias de /send. Si recibe {"text": "..."} sin "function", lo mapea a {"function":"echo","args":[text]}.'
+    consumes: [application/json]
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          properties:
+            text: {type: string, example: "Hola mundo"}
+            function: {type: string, example: "transfer"}
+            args:
+              type: array
+              items: {}
+              example: ["0xcbb879E2e8072104F7A1e724B4d597eAF2a1831D", 1000000000000000000]
+            value: {type: number, example: 0}
+          example:
+            # Ejemplo REAL: transferir 1 DAPP (18 decimales) al contrato TokenFarm en Sepolia.
+            # Nota: el contrato usado para ejecutar la función es el que tengas en ENV: CONTRACT_ADDRESS = DAppToken (0x01bb56E6A4deDa43338f8425407743CdCfAC1EA7).
+            # El destinatario ES OTRO contrato (TokenFarm), distinto al CONTRACT_ADDRESS:
+            function: "transfer"
+            args:
+              - "0xcbb879E2e8072104F7A1e724B4d597eAF2a1831D"  # TokenFarm (Sepolia)
+              - 1000000000000000000                         # 1 token si decimals = 18
+            value: 0
+    responses:
+      202: {description: Aceptado}
+      400: {description: Faltan/Inválidos}
+      501: {description: Task no disponible}
+      500: {description: Error servidor}
     """
     payload = request.get_json(silent=True) or {}
+
+    # Atajo: si viene solo "text", se mapea a echo(text)
     if "text" in payload and "function" not in payload:
         payload = {"function": "echo", "args": [payload["text"]]}
-    # Reusar la lógica de /send:
-    # (Evitamos test_request_context; replicamos mínimamente el flujo)
+
     func_name = payload.get("function") or payload.get("fn_name")
     args = payload.get("args", [])
     value = payload.get("value", 0)
 
     if not func_name:
         return jsonify({"ok": False, "error": "Falta 'function'"}), 400
+    if not isinstance(args, list):
+        return jsonify({"ok": False, "error": "'args' debe ser una lista"}), 400
+    try:
+        if isinstance(value, str):
+            value = int(value, 0)
+        else:
+            value = int(value or 0)
+    except Exception:
+        return jsonify({"ok": False, "error": "'value' debe ser entero"}), 400
 
     try:
         from app.tasks.blockchain_tasks import send_and_wait
-    except Exception:
+    except Exception as e:
         return jsonify({
             "ok": False,
-            "error": "Task 'send_and_wait' no está disponible. Crea app/tasks/blockchain_tasks.py."
+            "error": "Task 'send_and_wait' no está disponible. Crea app/tasks/blockchain_tasks.py.",
+            "detail": str(e),
         }), 501
 
-    job = AnalysisJob(status="queued", params=payload)
-    db.session.add(job)
-    db.session.commit()
+    try:
+        job = AnalysisJob(status="queued", params=payload)
+        db.session.add(job)
+        db.session.commit()
 
-    async_res = send_and_wait.delay(job.id, func_name, args, value)
-    job.task_id = async_res.id
-    db.session.commit()
+        async_res = send_and_wait.delay(job.id, func_name, args, value)
+        job.task_id = async_res.id
+        db.session.commit()
 
-    return jsonify({"ok": True, "job_id": job.id, "task_id": async_res.id, "status": "queued"}), 202
+        return jsonify({
+            "ok": True,
+            "job_id": job.id,
+            "task_id": async_res.id,
+            "status": "queued"
+        }), 202
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({
+            "ok": False,
+            "error": "No se pudo encolar la tarea",
+            "detail": str(e),
+        }), 500

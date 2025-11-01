@@ -6,25 +6,39 @@ import os
 from celery import shared_task
 from web3 import Web3
 
-# Importar el middleware correcto para PoA según la versión de web3 (v6)
-from web3.middleware import geth_poa_middleware
+# PoA: intento v6 (ExtraDataToPOAMiddleware) y fallback a geth_poa_middleware
+def _poa_middleware():
+    try:
+        from web3.middleware.proof_of_authority import ExtraDataToPOAMiddleware as poa_mw
+        return poa_mw
+    except Exception:
+        try:
+            from web3.middleware.geth_poa import geth_poa_middleware as poa_mw
+            return poa_mw
+        except Exception:
+            return None
 
 from app.models import db, AnalysisJob
 from app.models.audit import ContractAudit
 from app.services.abi_service import get_abi_for_address, fetch_abi_from_etherscan, save_abi
 from app.services.ai_service import risk_score
 
+
 def _make_w3():
     uri = os.getenv("WEB3_PROVIDER_URI")
     if not uri:
         raise RuntimeError("WEB3_PROVIDER_URI no configurado")
     w3 = Web3(Web3.HTTPProvider(uri, request_kwargs={"timeout": 10}))
-    # Si se indicó usar PoA, inyectar el middleware correspondiente
+
     if os.getenv("WEB3_USE_POA", "false").lower() in ("1", "true", "yes"):
-        w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+        poa_mw = _poa_middleware()
+        if poa_mw:
+            w3.middleware_onion.inject(poa_mw, layer=0)
+
     if not w3.is_connected():
         raise RuntimeError("No se pudo conectar al nodo Web3")
     return w3
+
 
 def _safe_call(contract, fn_name: str, *args):
     try:
@@ -34,6 +48,7 @@ def _safe_call(contract, fn_name: str, *args):
         return False, f"no_fn:{fn_name}"
     except Exception as e:
         return False, str(e)
+
 
 def _extract_features(w3, address: str, abi: list) -> Dict[str, Any]:
     c = w3.eth.contract(address=Web3.to_checksum_address(address), abi=abi)
@@ -86,12 +101,14 @@ def _extract_features(w3, address: str, abi: list) -> Dict[str, Any]:
     }
     return features
 
+
 def _level_from_score(score: float) -> str:
     if score >= 0.7:
         return "high"
     if score >= 0.55:
         return "medium"
     return "low"
+
 
 @shared_task(name="audit.run")
 def run_audit(job_id: int, address: str, network: str = "sepolia", force_refresh: bool = False):
@@ -112,12 +129,15 @@ def run_audit(job_id: int, address: str, network: str = "sepolia", force_refresh
         w3 = _make_w3()
 
         # Obtener ABI (usa cache a menos que force_refresh sea True)
-        if force_refresh:
+        if _as_bool(force_refresh):
             fresh = fetch_abi_from_etherscan(address, network=network)
             save_abi(address, fresh, network=network, source="etherscan")
             abi = fresh
         else:
             abi = get_abi_for_address(address, network=network)
+
+        if not abi:
+            raise RuntimeError("No se pudo resolver la ABI para el contrato")
 
         feats = _extract_features(w3, address, abi)
 
@@ -126,7 +146,7 @@ def run_audit(job_id: int, address: str, network: str = "sepolia", force_refresh
             "feature2": float(feats.get("risky_flags", 0.0)),
         }
         ia = risk_score(ia_input)
-        score = float(ia["risk_score"])
+        score = float(ia.get("risk_score", 0.0))
         level = _level_from_score(score)
 
         summary = {
@@ -163,3 +183,7 @@ def run_audit(job_id: int, address: str, network: str = "sepolia", force_refresh
         job.result = {"error": str(e)}
         db.session.commit()
         raise
+
+
+def _as_bool(v) -> bool:
+    return str(v).lower() in ("1", "true", "yes", "on")
