@@ -32,7 +32,7 @@ def create_app(config_name: str = "development"):
             "version": "1.0.0",
         },
         "basePath": "/",
-        "schemes": ["http"],
+        "schemes": ["https"],
     }
     swagger_config = {
         "headers": [],
