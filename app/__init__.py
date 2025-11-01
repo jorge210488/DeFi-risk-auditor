@@ -1,6 +1,8 @@
 from flask import Flask
 from flasgger import Swagger
 from prometheus_flask_exporter import PrometheusMetrics
+from flask_cors import CORS
+import os
 
 from .logging_setup import setup_logging
 from .routes import task_routes, blockchain_routes, health, ai_routes, audit_routes
@@ -18,6 +20,18 @@ def create_app(config_name: str = "development"):
     app.config.from_object(config_map.get(config_name.lower(), DevelopmentConfig))
 
     setup_logging(app)
+
+    # 👇 CORS por variable de entorno
+    # - CORS_ORIGINS no seteada o '*'  -> permite todos los orígenes
+    # - CORS_ORIGINS="https://app.example.com,https://admin.example.com" -> sólo esos
+    cors_origins = os.getenv("CORS_ORIGINS", "*").strip()
+    if cors_origins == "*" or cors_origins == "":
+        CORS(app)  # permite todo
+    else:
+        origins_list = [o.strip() for o in cors_origins.split(",") if o.strip()]
+        CORS(app, resources={r"/*": {"origins": origins_list}})
+    # Ejemplo (comentado) para un único origen específico:
+    # CORS(app, resources={r"/*": {"origins": ["https://app.example.com"]}})
 
     # 👇 Importar models aquí (ya con app creada y PYTHONPATH listo)
     from .models import init_app as init_models
