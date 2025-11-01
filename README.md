@@ -7,61 +7,95 @@
 ![DeFi Risk Auditor – Audit Flow](https://assets.example.com/screens/deFi-risk-auditor-audit-flow.png)
 ![DeFi Risk Auditor – Jobs](https://assets.example.com/screens/deFi-risk-auditor-jobs.png)
 
-## Description
-
-**DeFi Risk Auditor** is a Python/Flask backend that analyzes smart contracts on EVM networks. It automatically resolves and caches ABIs (via **Etherscan API v2**), performs read-only contract calls, runs an AI-based risk scoring (IsolationForest), and executes long-running audits asynchronously using **Celery** and **Redis**. The service exposes **OpenAPI/Swagger** docs and **Prometheus** metrics for observability.
+**DeFi Risk Auditor** is a Python/Flask backend to analyze EVM smart contracts.
+It automatically resolves and caches **ABIs** (Etherscan API v2), performs **read-only on-chain calls**, runs an **AI-based risk score** (IsolationForest), and executes **asynchronous audits** with Celery/Redis. The service exposes **OpenAPI/Swagger** and **Prometheus** metrics.
 
 **Live (Render):** `https://defi-risk-auditor.onrender.com`
 
 - API Docs: `/apidocs/`
 - Health: `/healthz`
-- Metrics (Prometheus): `/metrics`
+- Metrics: `/metrics`
 
 ---
 
-## Technologies Used
+## Features
 
-### Backend
+- 🔗 **Blockchain**
 
-- **Flask 3.x**
-- **Flask-SQLAlchemy 3.x** + **Flask-Migrate/Alembic**
-- **Celery 5.5** with **Redis** (broker + result backend)
-- **Web3.py 6.x** (PoA middleware support)
-- **scikit-learn**, **joblib**, **numpy** (AI risk scoring)
-- **Flasgger** (Swagger UI / OpenAPI)
-- **prometheus-flask-exporter** (metrics)
-- **requests** (Etherscan integration)
-- **python-json-logger** (structured logging)
+  - ABI resolution via **Etherscan v2** with **PostgreSQL cache**.
+  - **Read-only** Web3 calls (no gas), PoA middleware support.
+  - Optional signed transactions (requires `PRIVATE_KEY` in the worker).
 
-### Infrastructure
+- 🤖 **AI**
 
-- **Dockerfile** (Python 3.10-slim, non-root user)
-- **docker-compose**: `web`, `worker`, `db` (PostgreSQL 15), `redis`
-- **Render**: Docker deploy for Web Service (Flask) and Background Worker (Celery)
+  - Risk scoring (demo) with **IsolationForest** on features derived from ABI/bytecode.
+  - Used **directly** (demo endpoint) and **inside the audit pipeline**.
 
-### Database
+- 🧪 **Audit pipeline**
 
-- **PostgreSQL 15**
-- Key tables:
+  - ABI → feature extraction → AI score → persisted **ai_score/risk_level** + **summary/features**.
+  - Asynchronous execution via Celery, trackable with `job_id`.
 
-  - `analysis_jobs` — status/results for background tasks
-  - `contract_abis` — cached ABIs (indexed by `address`; includes `network`, `source`, JSON `abi`)
-  - `contract_audits` — end-to-end audit results (AI score, risk level, features, summary)
+- 📊 **Operations**
+
+  - **Swagger** documentation.
+  - **Prometheus** metrics (`prometheus-flask-exporter`).
+  - Structured logging with `python-json-logger`.
 
 ---
 
-## Deployment
+## Architecture (overview)
 
-- **Backend (Render)**: Docker-based deploy using the repository’s `Dockerfile`.
-- **Worker (Render)**: Background Worker using the same image and the Celery command.
-- **Managed PostgreSQL** (Render) with `DATABASE_URL`.
-- **Redis**: Use a Redis instance/URL compatible with Celery (e.g., `rediss://...` on Render).
+- **Flask** (API, Swagger, metrics)
+- **Celery + Redis** (queues/workers)
+- **PostgreSQL** (jobs, ABI cache, audits)
+- **Web3.py** (EVM RPC)
+- **Etherscan v2** (ABI source)
+- **scikit-learn** (AI model)
 
-> Note: In local `docker-compose`, Redis/DB service names are used (e.g., `redis://redis:6379/0`). In Render, set the corresponding external URLs in environment variables.
+Core flows:
+
+1. **Read-only calls** → Resolve ABI (inline/file/cache/Etherscan) → Web3 call → JSON result.
+2. **Audit** → ABI + bytecode → features (write ratio, flags, etc.) → AI → store score/level → fetch by `audit_id`.
+3. **Signing (optional)** → Worker with `PRIVATE_KEY` sends tx (not required for reads/audits).
 
 ---
 
-## How to Run the Application (Local)
+## Tech Stack
+
+- **Flask 3.x**, **Flask-SQLAlchemy 3.x**, **Flask-Migrate/Alembic**
+- **Celery 5.5** + **Redis**
+- **Web3.py 6.x** (PoA middleware)
+- **scikit-learn**, **joblib**, **numpy**
+- **Flasgger** (Swagger / OpenAPI)
+- **prometheus-flask-exporter**
+- **requests** (Etherscan)
+- **python-json-logger**
+
+---
+
+## Environment Variables (main)
+
+| Variable                                     | Description                                                       |
+| -------------------------------------------- | ----------------------------------------------------------------- |
+| `DATABASE_URL`                               | SQLAlchemy PostgreSQL URL                                         |
+| `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` | Celery broker/result backend (Redis)                              |
+| `WEB3_PROVIDER_URI`                          | RPC endpoint (e.g., Sepolia via Infura/Alchemy)                   |
+| `WEB3_CHAIN_ID`, `ETHERSCAN_CHAIN_ID`        | Chain IDs (Sepolia = `11155111`)                                  |
+| `WEB3_USE_POA`                               | Enable PoA middleware if `true`                                   |
+| `ETHERSCAN_API_KEY`                          | Etherscan API key                                                 |
+| `ETHERSCAN_NETWORK`                          | Human label for network (e.g., `sepolia`)                         |
+| `CONTRACT_ADDRESS`                           | Optional default address (fallback for reads)                     |
+| `CONTRACT_ABI_PATH`                          | Optional local ABI JSON fallback                                  |
+| `PRIVATE_KEY`                                | **Only** for signing tx in the worker (not required for reads/AI) |
+| `DEBUG_METRICS`                              | If set, enables extra metrics hints                               |
+
+> **Render vs Local:** In Render, configure external URLs (`rediss://`, managed `postgres://`, HTTPS RPC).
+> In local `docker-compose`, service names are used (`redis://redis:6379/0`, `db`, etc.).
+
+---
+
+## Getting Started (local)
 
 ### 1) Clone
 
@@ -70,9 +104,7 @@ git clone https://github.com/your-org/defi-risk-auditor.git
 cd defi-risk-auditor
 ```
 
-### 2) Environment Variables
-
-Create a `.env` file at the project root:
+### 2) `.env` (example)
 
 ```env
 # Redis / Celery
@@ -90,268 +122,41 @@ WEB3_USE_POA=true
 ETHERSCAN_NETWORK=sepolia
 ETHERSCAN_API_KEY=<YOUR_ETHERSCAN_KEY>
 
-# Optional defaults
+# Optional fallbacks
 CONTRACT_ADDRESS=0x01bb56E6A4deDa43338f8425407743CdCfAC1EA7
 CONTRACT_ABI_PATH=/app/app/abi/ERC20.json
 
-# Only for workers that sign TX (not required for read-only calls)
-PRIVATE_KEY=0xREPLACE_WITH_YOUR_PRIVATE_KEY
-
-# Diagnostics
-DEBUG_METRICS=1
+# Only if you will sign tx in the worker
+# PRIVATE_KEY=0xREPLACE_WITH_YOUR_PRIVATE_KEY
 ```
 
-### 3) Build & Run with Docker Compose
+### 3) Run
 
 ```bash
 docker compose up --build
 ```
 
-- **web**: applies DB migrations (`flask db upgrade`), then starts `wsgi.py`
-- **worker**: applies DB migrations, then starts Celery worker
-- **db** and **redis**: healthy checks ensure readiness
-
-**Ports:**
-
-- API: `http://localhost:5050/` (proxied to Flask on port `5000` inside the container)
-- Redis: `6379` (exposed in dev)
-- Postgres: `5432` (exposed in dev)
+- API: `http://localhost:5050/`
+- Swagger: `http://localhost:5050/apidocs/`
+- Health: `http://localhost:5050/healthz`
+- Metrics: `http://localhost:5050/metrics`
 
 ---
 
-## Environment Variables
+## Deployment (Render)
 
-| Variable                                     | Purpose                                              |
-| -------------------------------------------- | ---------------------------------------------------- |
-| `DATABASE_URL`                               | SQLAlchemy URL to PostgreSQL                         |
-| `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` | Celery broker/result backend (Redis)                 |
-| `WEB3_PROVIDER_URI`                          | RPC endpoint (Sepolia/Infura, etc.)                  |
-| `WEB3_CHAIN_ID`, `ETHERSCAN_CHAIN_ID`        | Chain IDs (e.g., 11155111 for Sepolia)               |
-| `WEB3_USE_POA`                               | Enable PoA middleware if `true`                      |
-| `ETHERSCAN_API_KEY`                          | Etherscan API key                                    |
-| `ETHERSCAN_NETWORK`                          | Human label for network (e.g., `sepolia`)            |
-| `CONTRACT_ADDRESS`                           | Default contract address (optional)                  |
-| `CONTRACT_ABI_PATH`                          | Local fallback path to ABI JSON (optional)           |
-| `PRIVATE_KEY`                                | Only needed by Celery worker for signed transactions |
-| `DEBUG_METRICS`                              | If set, enables Prometheus setup hints               |
+- **Web Service** (Flask) using the same Docker image.
+- **Background Worker** (Celery) with the worker command.
+- Managed **PostgreSQL** and **Redis** (or external providers).
+- Configure all **ENV VARS** in Render. Swagger is served with **HTTPS**.
 
 ---
 
-## API Overview
+## Security
 
-**Base URL (Render):** `https://defi-risk-auditor.onrender.com`
-
-### System
-
-- `GET /healthz` — health check
-- `GET /apidocs/` — Swagger UI
-- `GET /apispec_1.json` — OpenAPI spec
-- `GET /metrics` — Prometheus metrics
-
-### Blockchain / ABI
-
-- `GET /api/blockchain/ping` — simple ping
-
-- `GET /api/blockchain/health` — simple health
-
-- `GET /api/blockchain/abi?address=0x...&network=sepolia|mainnet`
-  Resolve ABI from cache or Etherscan v2 and return JSON list.
-
-- `POST /api/blockchain/abi`
-  Save/overwrite ABI manually in DB cache.
-
-  ```json
-  {
-    "address": "0x...",
-    "network": "sepolia",
-    "abi": [ { "type": "function", "name": "symbol", ... } ],
-    "source": "manual"
-  }
-  ```
-
-- `GET /api/blockchain/info`
-  Basic chain info (e.g., `chain_id`, `latest_block`).
-
-- `POST /api/blockchain/call`
-  Perform a **read-only** contract call using ABI from: body `abi` → file → cache → Etherscan v2.
-
-  ```json
-  {
-    "contract_address": "0x...",
-    "network": "sepolia",
-    "function": "symbol",
-    "args": [],
-    "force_refresh": false,
-    "cache_manual": false
-  }
-  ```
-
-### AI
-
-- `POST /api/ai/predict`
-  IsolationForest-based demo risk score.
-
-  ```json
-  { "feature1": 0.3, "feature2": -0.4 }
-  ```
-
-### Audits (asynchronous)
-
-- `POST /api/audit/start`
-  Enqueue an audit for `address`/`network`. Returns a `job_id`.
-
-  ```json
-  {
-    "address": "0x...",
-    "network": "sepolia",
-    "force_refresh": true
-  }
-  ```
-
-- `GET /api/audit/status/<job_id>`
-  Poll job state and result (when completed).
-
-- `GET /api/audit/<audit_id>`
-  Retrieve full audit (summary, features, AI score, risk level).
-
-- `GET /api/audit/`
-  List audits (optionally filter by `?address=`).
-
-### Jobs (generic)
-
-- `POST /send`
-  Enqueue a background job for a signed transaction (requires worker task).
-
-- `POST /procesar`
-  Example route to enqueue a background job; returns `job_id`.
-
-- `GET /jobs/<job_id>`
-  Check generic job status/result.
-
-> Exact payloads and response shapes are visible in **Swagger** at `/apidocs/`.
-
----
-
-## Sample Usage (cURL)
-
-> On macOS/Linux: `BASE=https://defi-risk-auditor.onrender.com`
-> On PowerShell: `$BASE = "https://defi-risk-auditor.onrender.com"`
-
-**Health**
-
-```bash
-curl -s "$BASE/healthz"
-```
-
-**Swagger**
-
-```bash
-curl -I "$BASE/apidocs/"
-```
-
-**Metrics (Prometheus)**
-
-```bash
-curl -s "$BASE/metrics" | head -n 30
-```
-
-**Blockchain ping**
-
-```bash
-curl -s "$BASE/api/blockchain/ping"
-```
-
-**Blockchain health**
-
-```bash
-curl -s "$BASE/api/blockchain/health"
-```
-
-**Save ABI manually**
-
-```bash
-curl -s -X POST "$BASE/api/blockchain/abi" \
-  -H "Content-Type: application/json" \
-  -d '{
-        "address":"0x3245166A4399A34A76cc9254BC13Aae3dA07e27b",
-        "network":"mainnet",
-        "abi":[
-          {"type":"function","name":"symbol","stateMutability":"view","inputs":[],"outputs":[{"type":"string","name":""}]}
-        ],
-        "source":"manual"
-      }'
-```
-
-**Resolve ABI (cache or Etherscan v2)**
-
-```bash
-curl -s "$BASE/api/blockchain/abi?address=0xA0b86991c6218b36c1d19d4a2e9eb0cE3606eB48&network=mainnet" | jq '.[0:3]'
-```
-
-**Read-only call**
-
-```bash
-curl -s -X POST "$BASE/api/blockchain/call" \
-  -H "Content-Type: application/json" \
-  -d '{
-        "contract_address":"0x01bb56E6A4deDa43338f8425407743CdCfAC1EA7",
-        "network":"sepolia",
-        "function":"symbol",
-        "args":[]
-      }'
-```
-
-**AI risk score**
-
-```bash
-curl -s -X POST "$BASE/api/ai/predict" \
-  -H "Content-Type: application/json" \
-  -d '{"feature1":0.3,"feature2":-0.4}'
-```
-
-**Start audit (async)**
-
-```bash
-curl -s -X POST "$BASE/api/audit/start" \
-  -H "Content-Type: application/json" \
-  -d '{"address":"0x01bb56E6A4deDa43338f8425407743CdCfAC1EA7","network":"sepolia","force_refresh":true}'
-```
-
-**Check job status**
-
-```bash
-curl -s "$BASE/api/audit/status/123"
-```
-
-**Fetch audit by id**
-
-```bash
-curl -s "$BASE/api/audit/456" | jq .
-```
-
-**Send job**
-
-```bash
-curl -s -X POST "$BASE/send" \
-  -H "Content-Type: application/json" \
-  -d '{"function":"echo","args":["hola"],"value":0}'
-```
-
----
-
-## Observability
-
-- **Prometheus**: `/metrics` (includes app info and HTTP request metrics)
-- **Structured logs**: `python-json-logger`
-- **Health**: `/healthz`
-
----
-
-## Security Notes
-
-- **Private keys** are **not required** for read-only calls.
-- If you configure `PRIVATE_KEY`, keep it **only** in secure worker environments (e.g., Render Background Worker).
-- On public deployments, **never** expose signing endpoints without proper auth/rate limiting.
+- `PRIVATE_KEY` is **not needed** for read-only calls or audits.
+- If you enable signing, keep `PRIVATE_KEY` **only** in the worker and secured.
+- For public deployments, consider **auth**, **rate limiting**, and secret rotation.
 
 ---
 
@@ -359,31 +164,35 @@ curl -s -X POST "$BASE/send" \
 
 ```
 app/
-  __init__.py            # create_app(), Swagger, Prometheus, blueprints
+  __init__.py            # create_app(), Swagger, metrics, blueprints
   models/
-    __init__.py          # SQLAlchemy/Migrate init, model imports
+    __init__.py          # SQLAlchemy/Migrate init
     job.py               # AnalysisJob
-    contract_abi.py      # ContractABI cache
+    contract_abi.py      # ABI cache
     audit.py             # ContractAudit
   routes/
-    task_routes.py       # /procesar, /jobs/<id>
-    blockchain_routes.py # /api/blockchain/*
-    ai_routes.py         # /api/ai/*
-    audit_routes.py      # /api/audit/*
     health.py            # /healthz
+    ai_routes.py         # /api/ai (AI demo)
+    blockchain_routes.py # /api/blockchain (ABI/cache/read calls)
+    audit_routes.py      # /api/audit (audit jobs)
+    task_routes.py       # generic jobs / alias
   services/
-    abi_service.py       # Etherscan v2, cache, save, resolve
+    abi_service.py       # Etherscan v2, cache/resolve
     ai_service.py        # IsolationForest risk scoring
   tasks/
-    celery_app.py        # Celery app init (Flask context)
-    background_tasks.py  # examples
-    audit_tasks.py       # audit.run pipeline
+    audit_tasks.py       # audit.run (AI pipeline)
+    blockchain_tasks.py  # tx send/wait
+    ai_tasks.py          # async inference (optional)
 config/
-  ...
-wsgi.py                  # Flask entrypoint
-docker-compose.yml
 Dockerfile
+docker-compose.yml
 requirements.txt
+wsgi.py
 ```
 
 ---
+
+## API
+
+Full request/response details are documented in **Swagger**:
+`https://defi-risk-auditor.onrender.com/apidocs/`
