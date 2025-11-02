@@ -399,17 +399,28 @@ def send_tx():
           required:
             - function
           properties:
-            function: {type: string, example: "transfer"}
+            function:
+              type: string
+              example: "transfer"
             args:
               type: array
               items: {}
-              example: []
-            value: {type: number, example: 0}
+              example: [
+                "0xCbb879E2e8072104F7A1e724B4d597eAF2a1831D",
+                1000000000000000000
+              ]
+            value:
+              type: number
+              example: 0
     responses:
-      202: {description: Aceptado}
-      400: {description: Faltan/Inválidos}
-      501: {description: Task no disponible}
-      500: {description: Error servidor}
+      202:
+        description: Aceptado
+      400:
+        description: Faltan/Inválidos
+      501:
+        description: Task no disponible
+      500:
+        description: Error servidor
     """
     data = request.get_json(silent=True) or {}
 
@@ -421,14 +432,15 @@ def send_tx():
         return jsonify({"ok": False, "error": "Falta 'function'"}), 400
     if not isinstance(args, list):
         return jsonify({"ok": False, "error": "'args' debe ser una lista"}), 400
+
     try:
-        # normaliza value (soporta str numéricas)
+        # normaliza value (soporta str numéricas o hex)
         if isinstance(value, str):
             value = int(value, 0)  # admite "10" o "0x..."
         else:
             value = int(value or 0)
     except Exception:
-        return jsonify({"ok": False, "error": "'value' debe ser entero"}), 400
+        return jsonify({"ok": False, "error": "'value' debe ser un número entero"}), 400
 
     # Import diferido de la task
     try:
@@ -441,7 +453,7 @@ def send_tx():
         }), 501
 
     try:
-        # Crear job y encolar
+        # Crear job y encolar la tarea Celery
         job = AnalysisJob(status="queued", params=data)
         db.session.add(job)
         db.session.commit()
@@ -464,6 +476,7 @@ def send_tx():
             "error": "No se pudo encolar la tarea",
             "detail": str(e),
         }), 500
+
 
 
 @bp.route("/procesar", methods=["POST"])
