@@ -1,16 +1,15 @@
 # DeFi Risk Auditor
 
-![DeFi Risk Auditor – Overview](https://assets.example.com/screens/deFi-risk-auditor-overview.png)
-![DeFi Risk Auditor – Swagger](https://assets.example.com/screens/deFi-risk-auditor-swagger.png)
-![DeFi Risk Auditor – Metrics](https://assets.example.com/screens/deFi-risk-auditor-metrics.png)
-![DeFi Risk Auditor – ABI Cache](https://assets.example.com/screens/deFi-risk-auditor-abi-cache.png)
-![DeFi Risk Auditor – Audit Flow](https://assets.example.com/screens/deFi-risk-auditor-audit-flow.png)
-![DeFi Risk Auditor – Jobs](https://assets.example.com/screens/deFi-risk-auditor-jobs.png)
+![DeFi Risk Auditor – Dashboard](screens/dashboard.png)
+![DeFi Risk Auditor – Audit Center](screens/audit-center.png)
+![DeFi Risk Auditor – Blockchain Tools](screens/blockchain-tools.png)
+![DeFi Risk Auditor – Swagger](screens/swagger.png)
 
 **DeFi Risk Auditor** is a Python/Flask backend to analyze EVM smart contracts.
 It automatically resolves and caches **ABIs** (Etherscan API v2), performs **read-only on-chain calls**, runs an **AI-based risk score** (IsolationForest), and executes **asynchronous audits** with Celery/Redis. The service exposes **OpenAPI/Swagger** and **Prometheus** metrics.
 
 **Live (Render):** `https://defi-risk-auditor.onrender.com`
+**Frontend (Lovable):** `https://defi-validator.jorgemartinezjam.dev/`
 
 - API Docs: `/apidocs/`
 - Health: `/healthz`
@@ -76,19 +75,22 @@ Core flows:
 
 ## Environment Variables (main)
 
-| Variable                                     | Description                                                       |
-| -------------------------------------------- | ----------------------------------------------------------------- |
-| `DATABASE_URL`                               | SQLAlchemy PostgreSQL URL                                         |
-| `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` | Celery broker/result backend (Redis)                              |
-| `WEB3_PROVIDER_URI`                          | RPC endpoint (e.g., Sepolia via Infura/Alchemy)                   |
-| `WEB3_CHAIN_ID`, `ETHERSCAN_CHAIN_ID`        | Chain IDs (Sepolia = `11155111`)                                  |
-| `WEB3_USE_POA`                               | Enable PoA middleware if `true`                                   |
-| `ETHERSCAN_API_KEY`                          | Etherscan API key                                                 |
-| `ETHERSCAN_NETWORK`                          | Human label for network (e.g., `sepolia`)                         |
-| `CONTRACT_ADDRESS`                           | Optional default address (fallback for reads)                     |
-| `CONTRACT_ABI_PATH`                          | Optional local ABI JSON fallback                                  |
-| `PRIVATE_KEY`                                | **Only** for signing tx in the worker (not required for reads/AI) |
-| `DEBUG_METRICS`                              | If set, enables extra metrics hints                               |
+| Variable                                     | Description                                                                                  |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `DATABASE_URL`                               | SQLAlchemy PostgreSQL URL                                                                    |
+| `CELERY_BROKER_URL`, `CELERY_RESULT_BACKEND` | Celery broker/result backend (Redis)                                                         |
+| `WEB3_PROVIDER_URI`                          | RPC endpoint (e.g., Sepolia via Infura/Alchemy)                                              |
+| `WEB3_CHAIN_ID`, `ETHERSCAN_CHAIN_ID`        | Chain IDs (Sepolia = `11155111`)                                                             |
+| `WEB3_USE_POA`                               | Enable PoA middleware if `true`                                                              |
+| `ETHERSCAN_API_KEY`                          | Etherscan API key                                                                            |
+| `ETHERSCAN_NETWORK`                          | Human label for network (e.g., `sepolia`)                                                    |
+| `CONTRACT_ADDRESS`                           | Optional default address (fallback for reads)                                                |
+| `CONTRACT_ABI_PATH`                          | Optional local ABI JSON fallback                                                             |
+| `PRIVATE_KEY`                                | **Only** for signing tx in the worker (not required for reads/AI)                            |
+| `DEBUG_METRICS`                              | If set, enables extra metrics hints                                                          |
+| `RUN_CELERY_IN_WEB`                          | If `1/true`, entrypoint also starts a Celery worker **inside the web container** (dev only). |
+| `CELERY_LOGLEVEL`                            | Optional log level for that inline worker (default `INFO`)                                   |
+| `CELERY_CONCURRENCY`                         | Optional concurrency for that inline worker (default `1`, uses `--pool=solo`)                |
 
 > **Render vs Local:** In Render, configure external URLs (`rediss://`, managed `postgres://`, HTTPS RPC).
 > In local `docker-compose`, service names are used (`redis://redis:6379/0`, `db`, etc.).
@@ -128,6 +130,11 @@ CONTRACT_ABI_PATH=/app/app/abi/ERC20.json
 
 # Only if you will sign tx in the worker
 # PRIVATE_KEY=0xREPLACE_WITH_YOUR_PRIVATE_KEY
+
+# Dev-only: run a Celery worker in the same web container
+# RUN_CELERY_IN_WEB=1
+# CELERY_LOGLEVEL=INFO
+# CELERY_CONCURRENCY=1
 ```
 
 ### 3) Run
@@ -140,6 +147,52 @@ docker compose up --build
 - Swagger: `http://localhost:5050/apidocs/`
 - Health: `http://localhost:5050/healthz`
 - Metrics: `http://localhost:5050/metrics`
+
+---
+
+## Entrypoint (web + Celery in the same container — dev)
+
+The provided entrypoint can optionally start a **Celery worker inside the web container** (useful for local/dev or low-resource tiers). Enable it by setting `RUN_CELERY_IN_WEB=1` or `true`. **For production, run Celery as a separate worker service** and keep the web container focused on the API.
+
+```bash
+#!/usr/bin/env bash
+set -e
+
+echo "==== DEBUG PATHS ===="
+echo "PWD: $(pwd)"
+echo "PYTHONPATH: $PYTHONPATH"
+python - <<'PY'
+import sys, importlib
+print("sys.path:", sys.path)
+try:
+    import app
+    print("app.__file__ =", getattr(app, "__file__", None))
+    m = importlib.import_module("app.models")
+    print("app.models loaded from:", getattr(m, "__file__", None))
+except Exception as e:
+    print("DEBUG IMPORT ERROR:", repr(e))
+PY
+echo "======================"
+
+echo "Ejecutando migraciones (si existen)..."
+python -m flask --app wsgi.py db upgrade || echo "Migraciones no ejecutadas (comando db no disponible o sin cambios)."
+
+# --- Celery en el mismo contenedor del web (opcional) ---
+# Actívalo con RUN_CELERY_IN_WEB=1 en variables de entorno del servicio web.
+# Pool "solo" y concurrency 1 para ahorrar RAM en el tier gratis.
+if [ "${RUN_CELERY_IN_WEB}" = "1" ] || [ "${RUN_CELERY_IN_WEB}" = "true" ]; then
+  echo "[entrypoint] Starting Celery worker in background..."
+  celery -A app.tasks.celery_app.celery worker \
+    --loglevel="${CELERY_LOGLEVEL:-INFO}" \
+    --concurrency="${CELERY_CONCURRENCY:-1}" \
+    --pool=solo &
+fi
+
+echo "Iniciando aplicación..."
+exec python wsgi.py
+```
+
+> **Production note:** Disable `RUN_CELERY_IN_WEB` and deploy a separate **worker** process/service using the same image and environment (broker/backend).
 
 ---
 
