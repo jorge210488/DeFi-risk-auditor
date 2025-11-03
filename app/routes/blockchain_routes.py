@@ -386,7 +386,12 @@ def call_contract():
 @bp.route("/send", methods=["POST"])
 def send_tx():
     """
-    Blockchain: encolar transacción firmada (vía Celery)
+    Blockchain: encolar transacción firmada (vía Celery) con overrides dinámicos.
+    Permite pasar en el body:
+      - contract_address (opcional; si falta usa ENV CONTRACT_ADDRESS)
+      - abi (inline)  o  abi_path  o  force_refresh=true (Etherscan)
+      - network (p.ej. "sepolia")
+      - function, args, value (wei)
     ---
     tags: [Blockchain]
     consumes: [application/json]
@@ -396,31 +401,30 @@ def send_tx():
         required: true
         schema:
           type: object
-          required:
-            - function
+          required: [function]
           properties:
-            function:
-              type: string
-              example: "transfer"
-            args:
-              type: array
-              items: {}
-              example: [
-                "0xCbb879E2e8072104F7A1e724B4d597eAF2a1831D",
-                1000000000000000000
-              ]
-            value:
-              type: number
-              example: 0
+            contract_address: {type: string, example: "0x749751AD2D1927b21a643788B5Ed5f568e4d9C6C"}
+            network: {type: string, example: "sepolia"}
+            abi: {type: array, items: {type: object}}
+            abi_path: {type: string, example: "/app/app/abi/ERC20.json.bak"}
+            force_refresh: {type: boolean, example: true}
+            cache_manual: {type: boolean, example: true}
+            function: {type: string, example: "deposit"}
+            args: {type: array, items: {}, example: []}
+            value: {type: number, example: 1000000000000000}
+          example:
+            contract_address: "0x749751AD2D1927b21a643788B5Ed5f568e4d9C6C"
+            network: "sepolia"
+            function: "deposit"
+            args: []
+            value: 1000000000000000
+            force_refresh: true
+            cache_manual: false
     responses:
-      202:
-        description: Aceptado
-      400:
-        description: Faltan/Inválidos
-      501:
-        description: Task no disponible
-      500:
-        description: Error servidor
+      202: {description: Aceptado}
+      400: {description: Faltan/Inválidos}
+      501: {description: Task no disponible}
+      500: {description: Error servidor}
     """
     data = request.get_json(silent=True) or {}
 
@@ -432,141 +436,59 @@ def send_tx():
         return jsonify({"ok": False, "error": "Falta 'function'"}), 400
     if not isinstance(args, list):
         return jsonify({"ok": False, "error": "'args' debe ser una lista"}), 400
-
     try:
-        # normaliza value (soporta str numéricas o hex)
-        if isinstance(value, str):
-            value = int(value, 0)  # admite "10" o "0x..."
-        else:
-            value = int(value or 0)
+        # normaliza value (admite "10" o "0x...")
+        value = int(value, 0) if isinstance(value, str) else int(value or 0)
     except Exception:
-        return jsonify({"ok": False, "error": "'value' debe ser un número entero"}), 400
+        return jsonify({"ok": False, "error": "'value' debe ser un entero"}), 400
 
-    # Import diferido de la task
+    # Overrides que viajan a la task
+    overrides = {
+        "contract_address": data.get("contract_address"),
+        "network": (data.get("network") or os.getenv("ETHERSCAN_NETWORK", "sepolia")).strip().lower(),
+        "abi": data.get("abi"),
+        "abi_path": data.get("abi_path"),
+        "force_refresh": bool(data.get("force_refresh", False)),
+        "cache_manual": bool(data.get("cache_manual", False)),
+    }
+
     try:
         from app.tasks.blockchain_tasks import send_and_wait
     except Exception as e:
         return jsonify({
             "ok": False,
-            "error": "Task 'send_and_wait' no está disponible. Crea app/tasks/blockchain_tasks.py.",
+            "error": "Task 'send_and_wait' no está disponible.",
             "detail": str(e),
         }), 501
 
     try:
-        # Crear job y encolar la tarea Celery
         job = AnalysisJob(status="queued", params=data)
         db.session.add(job)
         db.session.commit()
 
-        async_res = send_and_wait.delay(job.id, func_name, args, value)
+        async_res = send_and_wait.delay(job.id, func_name, args, value, overrides)
         job.task_id = async_res.id
         db.session.commit()
 
-        return jsonify({
-            "ok": True,
-            "job_id": job.id,
-            "task_id": async_res.id,
-            "status": "queued"
-        }), 202
+        return jsonify({"ok": True, "job_id": job.id, "task_id": async_res.id, "status": "queued"}), 202
 
     except Exception as e:
         db.session.rollback()
-        return jsonify({
-            "ok": False,
-            "error": "No se pudo encolar la tarea",
-            "detail": str(e),
-        }), 500
-
+        return jsonify({"ok": False, "error": "No se pudo encolar la tarea", "detail": str(e)}), 500
 
 
 @bp.route("/procesar", methods=["POST"])
 def procesar_alias():
     """
-    Blockchain: procesar (alias de /send)
+    Alias de /send con mismo comportamiento dinámico.
+    Si recibe {"text": "..."} sin "function", lo mapea a {"function":"echo","args":[text]}.
     ---
     tags: [Blockchain]
-    description: 'Alias de /send. Si recibe {"text": "..."} sin "function", lo mapea a {"function":"echo","args":[text]}.'
-    consumes: [application/json]
-    parameters:
-      - in: body
-        name: body
-        required: true
-        schema:
-          type: object
-          properties:
-            text: {type: string, example: "Hola mundo"}
-            function: {type: string, example: "transfer"}
-            args:
-              type: array
-              items: {}
-              example: ["0xcbb879E2e8072104F7A1e724B4d597eAF2a1831D", 1000000000000000000]
-            value: {type: number, example: 0}
-          example:
-            # Ejemplo REAL: transferir 1 DAPP (18 decimales) al contrato TokenFarm en Sepolia.
-            # Nota: el contrato usado para ejecutar la función es el que tengas en ENV: CONTRACT_ADDRESS = DAppToken (0x01bb56E6A4deDa43338f8425407743CdCfAC1EA7).
-            # El destinatario ES OTRO contrato (TokenFarm), distinto al CONTRACT_ADDRESS:
-            function: "transfer"
-            args:
-              - "0xcbb879E2e8072104F7A1e724B4d597eAF2a1831D"  # TokenFarm (Sepolia)
-              - 1000000000000000000                         # 1 token si decimals = 18
-            value: 0
-    responses:
-      202: {description: Aceptado}
-      400: {description: Faltan/Inválidos}
-      501: {description: Task no disponible}
-      500: {description: Error servidor}
     """
     payload = request.get_json(silent=True) or {}
-
-    # Atajo: si viene solo "text", se mapea a echo(text)
     if "text" in payload and "function" not in payload:
         payload = {"function": "echo", "args": [payload["text"]]}
 
-    func_name = payload.get("function") or payload.get("fn_name")
-    args = payload.get("args", [])
-    value = payload.get("value", 0)
-
-    if not func_name:
-        return jsonify({"ok": False, "error": "Falta 'function'"}), 400
-    if not isinstance(args, list):
-        return jsonify({"ok": False, "error": "'args' debe ser una lista"}), 400
-    try:
-        if isinstance(value, str):
-            value = int(value, 0)
-        else:
-            value = int(value or 0)
-    except Exception:
-        return jsonify({"ok": False, "error": "'value' debe ser entero"}), 400
-
-    try:
-        from app.tasks.blockchain_tasks import send_and_wait
-    except Exception as e:
-        return jsonify({
-            "ok": False,
-            "error": "Task 'send_and_wait' no está disponible. Crea app/tasks/blockchain_tasks.py.",
-            "detail": str(e),
-        }), 501
-
-    try:
-        job = AnalysisJob(status="queued", params=payload)
-        db.session.add(job)
-        db.session.commit()
-
-        async_res = send_and_wait.delay(job.id, func_name, args, value)
-        job.task_id = async_res.id
-        db.session.commit()
-
-        return jsonify({
-            "ok": True,
-            "job_id": job.id,
-            "task_id": async_res.id,
-            "status": "queued"
-        }), 202
-
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({
-            "ok": False,
-            "error": "No se pudo encolar la tarea",
-            "detail": str(e),
-        }), 500
+    # Reutiliza la lógica de /send
+    request._cached_json = (payload, payload)  # pequeño truco para reutilizar
+    return send_tx()
